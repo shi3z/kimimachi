@@ -14,7 +14,7 @@ from ..net import fetch
 from ..raster import FOREST, GRASS, LOT_COM, LOT_PUB, LOT_RES, NONE, PARK, RAIL, ROAD, WATER
 
 URL = "https://maps.googleapis.com/maps/api/staticmap"
-ATTRIBUTION = "Google Maps"
+ATTRIBUTION = "Map data ©Google"
 SIZE = 640          # logical px per request (API max)
 SCALE = 2           # 2x pixels per request
 MARGIN = 40         # logical px trimmed from each edge (logo / copyright)

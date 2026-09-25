@@ -7,7 +7,7 @@ from ..raster import (BARE, FIELD, FOREST, GRASS, LOT_COM, LOT_IND, LOT_PUB, LOT
 
 CATALOG_URL = "https://api.plateau.reearth.io/datacatalog/plateau-datasets"
 Z = 16
-ATTRIBUTION = "Project PLATEAU（国土交通省）"
+ATTRIBUTION = "3D都市モデル（Project PLATEAU）（国土交通省）"
 
 # luse:class_code -> semantic class. None = draw into the road/water layers instead.
 LUSE_CLASS = {
@@ -62,13 +62,16 @@ def find_datasets(frame):
             best[key] = d
     if not best:
         return None
-    names = []
+    names, credits = [], []
     for (_, code), d in best.items():
         name = d.get("ward") or d.get("city")
         if name not in names:
             names.append(name)
+            credits.append(f"{name}（{d.get('year')}年度）")
     return {
         "city": ", ".join(names),
+        # PLATEAU citation style: 3D都市モデル（Project PLATEAU）長岡市（2024年度）
+        "attribution": f"3D都市モデル（Project PLATEAU）{'、'.join(credits)}（国土交通省）",
         "luse": [d["url"] for (k, _), d in best.items() if k == "luse"],
         "tran": [d["url"] for (k, _), d in best.items() if k == "tran"],
         "years": sorted({int(d.get("year", 0)) for d in best.values()}),

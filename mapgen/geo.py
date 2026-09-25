@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .net import fetch_json
 
 EARTH_CIRC = 40075016.686
+GEOCODE_ATTRIBUTION = "地名検索: Nominatim / © OpenStreetMap contributors"
 
 
 def geocode(query):

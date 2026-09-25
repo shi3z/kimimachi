@@ -158,7 +158,8 @@ function lonlatAt(tx, ty) {
 }
 
 const hud = document.getElementById("hud");
-document.getElementById("attr").textContent = "出典: " + MAP.meta.attribution + " を加工して作成";
+document.getElementById("attr").textContent = "出典: " + MAP.meta.attribution + " を加工して作成" +
+  (MAP.meta.geocoding ? "（" + MAP.meta.geocoding + "）" : "");
 let lastHud = "";
 
 function render() {

@@ -16,7 +16,7 @@ from . import diagonal
 from . import raster as R
 from .abstract import KINDS, abstract, building_groups
 from .export import write_all
-from .geo import Frame, geocode
+from .geo import GEOCODE_ATTRIBUTION, Frame, geocode
 from .sources import gsi, plateau
 from .schematic import Schematizer
 from .tileset import assign_tiles, build_tileset, overlay_tiles
@@ -117,7 +117,7 @@ def main(argv=None):
             print(f"   土地利用 {n_luse} 面, 道路 {n_tran} 面")
             gsi.draw_buildings(rast, gfeats)
             draw_network(0)
-            attributions += [plateau.ATTRIBUTION, gsi.ATTRIBUTION]
+            attributions += [ds["attribution"], gsi.ATTRIBUTION]
 
     if source == "gsi":
         gsi.draw_water(rast, gfeats)
@@ -160,7 +160,8 @@ def main(argv=None):
     title = a.title or a.place
     meta = {"place": title, "display_name": place["display_name"], "source": source,
             "center": [round(lat, 6), round(lon, 6)], "bounds": [lon0, lat0, lon1, lat1],
-            "tile_m": a.tile_m, "layout": a.layout, "attribution": " / ".join(attributions)}
+            "tile_m": a.tile_m, "layout": a.layout, "attribution": " / ".join(attributions),
+            "geocoding": GEOCODE_ATTRIBUTION}
     out = a.out or "out/" + re.sub(r'[\\/:*?"<>| ]+', "_", title)
     write_all(out, kinds=kinds, tiles=tiles, tileset=tileset, source_img=source_img,
               semantic_img=semantic_img, labels=labels, meta=meta, overlay=overlay)

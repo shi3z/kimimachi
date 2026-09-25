@@ -4,7 +4,7 @@ from ..raster import BLDG, RAIL, ROAD, WATER, mvt_features
 
 URL = "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf"
 Z = 16
-ATTRIBUTION = "国土地理院ベクトルタイル"
+ATTRIBUTION = "国土地理院最適化ベクトルタイル"
 
 # road centerline width rank -> meters
 RNK_WIDTH_M = {0: 2.5, 1: 4.0, 2: 8.0, 3: 16.0, 4: 24.0}
