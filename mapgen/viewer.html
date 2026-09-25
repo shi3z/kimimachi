@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>__TITLE__ ピクセルマップ</title>
+<style>
+  :root { --bg: #16161d; --panel: rgba(20, 20, 28, .82); --text: #f4f1e8; --muted: #b8b4a8; --accent: #f2c14e; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font-family: "DotGothic16", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif; }
+  canvas { display: block; image-rendering: pixelated; }
+  #game { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  .hud { position: fixed; left: 12px; top: 12px; background: var(--panel); border: 2px solid #000;
+    box-shadow: inset 0 0 0 2px #5a5668; padding: 8px 12px; border-radius: 6px; font-size: 14px; line-height: 1.5; max-width: calc(100vw - 48px); }
+  .hud b { color: var(--accent); font-weight: normal; }
+  .hud small { color: var(--muted); display: block; font-size: 11px; }
+  #mini { position: fixed; right: 12px; top: 12px; border: 2px solid #000; box-shadow: 0 0 0 2px #5a5668; background: #000; }
+  .help { position: fixed; left: 12px; bottom: 12px; background: var(--panel); padding: 6px 10px; border-radius: 6px; font-size: 12px; color: var(--muted); }
+  .attr { position: fixed; right: 8px; bottom: 6px; font-size: 10px; color: var(--muted); text-shadow: 0 1px 0 #000; }
+  #pad { position: fixed; right: 20px; bottom: 28px; width: 150px; height: 150px; display: none; touch-action: none; }
+  #pad button { position: absolute; width: 50px; height: 50px; border: 2px solid #000; border-radius: 8px;
+    background: rgba(40, 40, 52, .8); color: var(--text); font-size: 20px; touch-action: none; }
+  @media (pointer: coarse) { #pad { display: block; } .help { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<canvas id="mini"></canvas>
+<div class="hud" id="hud"></div>
+<div class="help">矢印/WASD: 移動　Shift: 走る　M: ミニマップ　+/-: ズーム</div>
+<div class="attr" id="attr"></div>
+<div id="pad">
+  <button data-d="up" style="left:50px;top:0">▲</button>
+  <button data-d="left" style="left:0;top:50px">◀</button>
+  <button data-d="right" style="left:100px;top:50px">▶</button>
+  <button data-d="down" style="left:50px;top:100px">▼</button>
+</div>
+<script>
+const MAP = /*__MAPDATA__*/null;
+const TS = MAP.tileSize, COLS = MAP.width, ROWS = MAP.height;
+const KIND_JA = { grass: "草地", forest: "森", paddy: "田んぼ", field: "畑", water: "川・水辺", road: "道路", bridge: "橋",
+  rail: "線路", rail_bridge: "鉄橋", crossing: "踏切", park: "公園", parking: "駐車場", yard: "住宅地", plaza: "広場・敷地",
+  bare: "空き地", house: "家", shop: "店・ビル", factory: "工場", public: "公共施設",
+  road_diag: "斜めの道", rail_diag: "線路" };
+const blocking = new Set(MAP.blockingKinds.map(k => MAP.kinds.indexOf(k)));
+const kindAt = (x, y) => (x < 0 || y < 0 || x >= COLS || y >= ROWS) ? -1 : MAP.kindGrid[y * COLS + x];
+const walkable = (x, y) => { const k = kindAt(x, y); return k >= 0 && !blocking.has(k); };
+
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+const mini = document.getElementById("mini"), mctx = mini.getContext("2d");
+const tiles = new Image(); tiles.src = "__TILESET__";
+let zoom = Math.max(2, Math.round(Math.min(innerWidth, innerHeight) / 300));
+let showMini = true;
+
+function resize() {
+  const dpr = devicePixelRatio || 1;
+  cv.width = Math.floor(innerWidth * dpr); cv.height = Math.floor(innerHeight * dpr);
+  cv.style.width = innerWidth + "px"; cv.style.height = innerHeight + "px";
+  ctx.imageSmoothingEnabled = false;
+}
+addEventListener("resize", resize); resize();
+
+// ---- minimap (1px per tile)
+const miniBase = document.createElement("canvas"); miniBase.width = COLS; miniBase.height = ROWS;
+{ const c = miniBase.getContext("2d"), img = c.createImageData(COLS, ROWS);
+  MAP.kindGrid.forEach((k, i) => { const col = MAP.kindColors[k]; img.data.set([col[0], col[1], col[2], 255], i * 4); });
+  c.putImageData(img, 0, 0); }
+let MS = 1;
+function sizeMini() {
+  // about a third of the screen, up to 360px on the long side
+  const target = Math.min(360, Math.max(160, Math.min(innerWidth, innerHeight) * 0.45));
+  MS = target / Math.max(COLS, ROWS);
+  const dpr = devicePixelRatio || 1;
+  mini.width = Math.round(COLS * MS * dpr); mini.height = Math.round(ROWS * MS * dpr);
+  mini.style.width = Math.round(COLS * MS) + "px"; mini.style.height = Math.round(ROWS * MS) + "px";
+}
+sizeMini(); addEventListener("resize", sizeMini);
+
+// ---- player: start on the walkable tile nearest the centre, preferring roads
+const player = { x: 0, y: 0, px: 0, py: 0, dir: "down", t: 0, moving: false, from: null };
+{ let cx = COLS >> 1, cy = ROWS >> 1; const road = MAP.kinds.indexOf("road"); let best = null;
+  // start at the station closest to the map centre, if there is one
+  const st = MAP.labels.filter(l => l.kind === "station")
+    .sort((a, b) => Math.hypot(a.tile[0] - cx, a.tile[1] - cy) - Math.hypot(b.tile[0] - cx, b.tile[1] - cy))[0];
+  if (st) { cx = Math.round(st.tile[0]); cy = Math.round(st.tile[1]); }
+  for (let r = 0; r < Math.max(COLS, ROWS) && !best; r++)
+    for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++)
+      if (!best && kindAt(x, y) === road) best = [x, y];
+  [player.x, player.y] = best || [cx, cy]; player.px = player.x; player.py = player.y; }
+
+const keys = new Set();
+addEventListener("keydown", e => {
+  keys.add(e.key.toLowerCase());
+  if (e.key === "m" || e.key === "M") { showMini = !showMini; mini.style.display = showMini ? "" : "none"; }
+  if (e.key === "+" || e.key === "=") zoom = Math.min(8, zoom + 1);
+  if (e.key === "-") zoom = Math.max(1, zoom - 1);
+  if (e.key.startsWith("Arrow")) e.preventDefault();
+});
+addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+const padHeld = new Set();
+document.querySelectorAll("#pad button").forEach(b => {
+  const d = b.dataset.d;
+  b.addEventListener("pointerdown", e => { e.preventDefault(); padHeld.add(d); b.setPointerCapture(e.pointerId); });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => b.addEventListener(ev, () => padHeld.delete(d)));
+});
+function wantDir() {
+  const k = keys;
+  if (k.has("arrowup") || k.has("w") || padHeld.has("up")) return "up";
+  if (k.has("arrowdown") || k.has("s") || padHeld.has("down")) return "down";
+  if (k.has("arrowleft") || k.has("a") || padHeld.has("left")) return "left";
+  if (k.has("arrowright") || k.has("d") || padHeld.has("right")) return "right";
+  return null;
+}
+const DV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+
+function update(dt) {
+  const speed = (keys.has("shift") ? 9 : 4.5);
+  if (player.moving) {
+    player.t += dt * speed;
+    if (player.t >= 1) { player.moving = false; player.px = player.x; player.py = player.y; }
+    else { player.px = player.from[0] + (player.x - player.from[0]) * player.t; player.py = player.from[1] + (player.y - player.from[1]) * player.t; }
+  }
+  if (!player.moving) {
+    const d = wantDir();
+    if (d) {
+      player.dir = d; const [dx, dy] = DV[d];
+      if (walkable(player.x + dx, player.y + dy)) {
+        player.from = [player.x, player.y]; player.x += dx; player.y += dy; player.t = 0; player.moving = true;
+      }
+    }
+  }
+}
+
+// ---- character sprite (drawn with rects, 16x16)
+function drawPlayer(sx, sy, s) {
+  const step = player.moving ? (Math.floor((player.px + player.py) * 4) % 2) : 0;
+  const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(sx + x * s, sy + y * s, w * s, h * s); };
+  R(3, 14, 10, 2, "rgba(0,0,0,.28)");
+  R(4, 10, 3, 5 - step, "#2a3a6a"); R(9, 10, 3, 5 - (1 - step), "#2a3a6a");      // legs
+  R(4, 6, 8, 6, "#d64541");                                                     // shirt
+  R(5, 1, 6, 6, "#f3c79b");                                                     // face
+  R(4, 0, 8, 3, "#3b2a20");                                                     // hair
+  if (player.dir === "down") { R(6, 4, 1, 1, "#222"); R(9, 4, 1, 1, "#222"); R(4, 2, 1, 2, "#3b2a20"); R(11, 2, 1, 2, "#3b2a20"); }
+  if (player.dir === "up") { R(5, 2, 6, 4, "#3b2a20"); }
+  if (player.dir === "left") { R(5, 4, 1, 1, "#222"); R(9, 2, 3, 3, "#3b2a20"); }
+  if (player.dir === "right") { R(10, 4, 1, 1, "#222"); R(4, 2, 3, 3, "#3b2a20"); }
+  R(3, 7, 1, 4, "#f3c79b"); R(12, 7, 1, 4, "#f3c79b");                          // arms
+  R(0, 0, 0, 0, "#000");
+}
+
+function lonlatAt(tx, ty) {
+  const [lon0, lat0, lon1, lat1] = MAP.meta.bounds;
+  const merc = lat => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+  const unmerc = m => (2 * Math.atan(Math.exp(m)) - Math.PI / 2) * 180 / Math.PI;
+  const lon = lon0 + (lon1 - lon0) * (tx + .5) / COLS;
+  const lat = unmerc(merc(lat1) + (merc(lat0) - merc(lat1)) * (ty + .5) / ROWS);
+  return [lat, lon];
+}
+
+const hud = document.getElementById("hud");
+document.getElementById("attr").textContent = "出典: " + MAP.meta.attribution + " を加工して作成";
+let lastHud = "";
+
+function render() {
+  const dpr = devicePixelRatio || 1, s = zoom * dpr, tsz = TS * s;
+  const vw = cv.width, vh = cv.height;
+  const camX = player.px * tsz + tsz / 2 - vw / 2, camY = player.py * tsz + tsz / 2 - vh / 2;
+  ctx.fillStyle = "#16161d"; ctx.fillRect(0, 0, vw, vh);
+  const x0 = Math.max(0, Math.floor(camX / tsz)), y0 = Math.max(0, Math.floor(camY / tsz));
+  const x1 = Math.min(COLS - 1, Math.ceil((camX + vw) / tsz)), y1 = Math.min(ROWS - 1, Math.ceil((camY + vh) / tsz));
+  for (const grid of [MAP.tileGrid, MAP.overlayGrid]) {
+    if (!grid) continue;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const t = grid[y * COLS + x];
+      if (t < 0) continue;
+      ctx.drawImage(tiles, (t % 16) * TS, Math.floor(t / 16) * TS, TS, TS,
+        Math.round(x * tsz - camX), Math.round(y * tsz - camY), Math.ceil(tsz), Math.ceil(tsz));
+    }
+  }
+  drawPlayer(Math.round(player.px * tsz - camX), Math.round(player.py * tsz - camY), s);
+
+  // labels
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const l of MAP.labels) {
+    const lx = l.tile[0] * tsz - camX, ly = l.tile[1] * tsz - camY;
+    if (lx < -200 || ly < -40 || lx > vw + 200 || ly > vh + 40) continue;
+    const big = l.kind === "station";
+    if (l.kind === "district" || l.kind === "route") {
+      ctx.font = `${11 * dpr}px sans-serif`; ctx.fillStyle = "rgba(255,255,255,.55)";
+      ctx.strokeStyle = "rgba(0,0,0,.45)"; ctx.lineWidth = 3 * dpr; ctx.strokeText(l.name, lx, ly); ctx.fillText(l.name, lx, ly);
+      continue;
+    }
+    ctx.font = `${(big ? 15 : 12) * dpr}px sans-serif`;
+    const w = ctx.measureText(l.name).width + 12 * dpr, h = (big ? 22 : 18) * dpr;
+    ctx.fillStyle = big ? "rgba(180,40,40,.9)" : "rgba(20,20,28,.78)";
+    ctx.fillRect(lx - w / 2, ly - h / 2, w, h);
+    ctx.fillStyle = "#fff"; ctx.fillText(l.name, lx, ly + 1);
+  }
+
+  if (showMini) {
+    mctx.imageSmoothingEnabled = false;
+    mctx.drawImage(miniBase, 0, 0, mini.width, mini.height);
+    const k = mini.width / COLS;
+    mctx.strokeStyle = "#fff"; mctx.lineWidth = 1;
+    mctx.strokeRect(camX / tsz * k, camY / tsz * k, vw / tsz * k, vh / tsz * k);
+    const r = Math.max(3, 2.5 * (devicePixelRatio || 1));
+    mctx.fillStyle = "#fff"; mctx.fillRect(player.px * k - r - 1, player.py * k - r - 1, 2 * r + 2, 2 * r + 2);
+    mctx.fillStyle = "#ff3030"; mctx.fillRect(player.px * k - r, player.py * k - r, 2 * r, 2 * r);
+  }
+
+  const kind = MAP.kinds[kindAt(player.x, player.y)];
+  let near = null, nd = 1e9;
+  for (const l of MAP.labels) { if (l.kind === "district" || l.kind === "route") continue;
+    const d = Math.hypot(l.tile[0] - player.x, l.tile[1] - player.y); if (d < nd) { nd = d; near = l; } }
+  const [lat, lon] = lonlatAt(player.x, player.y);
+  const h = `<b>${MAP.meta.place}</b> ・ ${KIND_JA[kind] || kind}<br>` +
+    (near && nd < 25 ? `近く: ${near.name}<br>` : "") +
+    `<small>${MAP.meta.layout === "schematic" ? "模式図（線路基準で整列）" : lat.toFixed(5) + ", " + lon.toFixed(5)} ・ 1マス ${MAP.meta.tile_m}m ・ ${COLS}×${ROWS}</small>`;
+  if (h !== lastHud) { hud.innerHTML = h; lastHud = h; }
+}
+
+let last = performance.now();
+function loop(now) { const dt = Math.min(.05, (now - last) / 1000); last = now; update(dt); render(); requestAnimationFrame(loop); }
+tiles.onload = () => requestAnimationFrame(loop);
+</script>
+</body>
+</html>
