@@ -1,0 +1,10 @@
+services:
+  kimi-server:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    entrypoint: ["/app/entrypoint.sh"]
+    ports:
+      - 8891:8891
+    volumes:
+      - ./:/app
